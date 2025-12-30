@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com';
+const API_BASE = process.env.GEMINI_API_BASE || 'https://api.nkb.nkbpal.cn';
 const API_KEY = process.env.GEMINI_API_KEY || '';
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3-pro-image-preview';
 
 export async function POST(request: NextRequest) {
   try {
