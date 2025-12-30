@@ -52,7 +52,8 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
   const extractImagesFromPDF = async (file: File): Promise<SlideImage[]> => {
     // 动态导入 PDF.js
     const pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+    // 使用 CDN 加载 worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
