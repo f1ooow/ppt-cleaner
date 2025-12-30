@@ -43,19 +43,72 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
   const processedCount = images.filter(img => img.status === 'completed').length;
   const errorCount = images.filter(img => img.status === 'error').length;
 
+  // 压缩图片到指定大小以下
+  const compressImage = async (base64: string, maxSizeKB: number = 1500): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // 如果原图很大，先缩小尺寸
+        const maxDimension = 2000;
+        if (width > maxDimension || height > maxDimension) {
+          const ratio = Math.min(maxDimension / width, maxDimension / height);
+          width = Math.floor(width * ratio);
+          height = Math.floor(height * ratio);
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        // 尝试不同质量压缩
+        let quality = 0.8;
+        let result = canvas.toDataURL('image/jpeg', quality);
+
+        while (result.length > maxSizeKB * 1024 * 1.37 && quality > 0.3) {
+          quality -= 0.1;
+          result = canvas.toDataURL('image/jpeg', quality);
+        }
+
+        resolve(result);
+      };
+      img.src = base64;
+    });
+  };
+
   const cleanImage = async (image: SlideImage, index: number): Promise<SlideImage> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120秒超时
 
     try {
+      // 压缩图片避免请求过大
+      const compressedBase64 = await compressImage(image.originalBase64);
+
       const response = await fetch('/api/clean-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: image.originalBase64 }),
+        body: JSON.stringify({ image_base64: compressedBase64 }),
         signal: controller.signal
       });
 
-      const data = await response.json();
+      // 检查响应是否成功
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { ...image, status: 'error', error: `请求失败: ${response.status}` };
+      }
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        return { ...image, status: 'error', error: '服务器返回格式错误' };
+      }
+
       console.log('[Clean] API Response:', data.success, !!data.data?.image_base64);
 
       if (data.success && data.data?.image_base64) {
