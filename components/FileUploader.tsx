@@ -49,6 +49,35 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
     return images;
   };
 
+  const extractImagesFromImages = async (files: FileList): Promise<SlideImage[]> => {
+    const images: SlideImage[] = [];
+    const imageFiles = Array.from(files).filter(f =>
+      /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name)
+    );
+
+    setProgress({ current: 0, total: imageFiles.length });
+
+    for (let i = 0; i < imageFiles.length; i++) {
+      const file = imageFiles[i];
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+
+      images.push({
+        id: `img-${i + 1}`,
+        pageNumber: i + 1,
+        originalBase64: base64,
+        status: 'pending'
+      });
+
+      setProgress({ current: i + 1, total: imageFiles.length });
+    }
+
+    return images;
+  };
+
   const extractImagesFromPDF = async (file: File): Promise<SlideImage[]> => {
     // 动态导入 PDF.js
     const pdfjsLib = await import('pdfjs-dist');
@@ -94,11 +123,11 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
     return images;
   };
 
-  const handleFile = async (file: File) => {
+  const handleFile = async (file: File, files?: FileList) => {
     const ext = file.name.split('.').pop()?.toLowerCase();
 
-    if (!ext || !['pptx', 'pdf'].includes(ext)) {
-      alert('请上传 .pptx 或 .pdf 文件');
+    if (!ext || !['pptx', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+      alert('请上传 .pptx、.pdf 或图片文件');
       return;
     }
 
@@ -108,8 +137,25 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
 
       if (ext === 'pptx') {
         images = await extractImagesFromPPTX(file);
-      } else {
+      } else if (ext === 'pdf') {
         images = await extractImagesFromPDF(file);
+      } else {
+        // 图片文件
+        images = await extractImagesFromImages(files || new DataTransfer().files);
+        if (images.length === 0) {
+          // 单个图片
+          const base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+          images = [{
+            id: 'img-1',
+            pageNumber: 1,
+            originalBase64: base64,
+            status: 'pending'
+          }];
+        }
       }
 
       if (images.length === 0) {
@@ -131,9 +177,9 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
     e.preventDefault();
     setIsDragging(false);
 
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      handleFile(file);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleFile(files[0], files);
     }
   }, []);
 
@@ -148,9 +194,9 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleFile(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      handleFile(files[0], files);
     }
   };
 
@@ -173,7 +219,8 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
         <input
           id="file-input"
           type="file"
-          accept=".pptx,.pdf"
+          accept=".pptx,.pdf,.png,.jpg,.jpeg,.gif,.webp"
+          multiple
           onChange={handleInputChange}
           className="hidden"
         />
@@ -201,7 +248,7 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
               拖放文件到此处，或点击上传
             </p>
             <p className="text-sm text-gray-500">
-              支持 .pptx 和 .pdf 格式
+              支持 .pptx、.pdf 和图片格式
             </p>
           </>
         )}
