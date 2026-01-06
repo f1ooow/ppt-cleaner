@@ -212,10 +212,12 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
       // 写入图片文件夹
       for (const img of completedImages) {
-        if (img.cleanedBase64) {
-          const base64Data = img.cleanedBase64.split(',')[1];
-          imagesFolder?.file(`slide-${img.pageNumber}.png`, base64Data, { base64: true });
-        }
+        if (!img.cleanedBase64) continue;
+        const match = img.cleanedBase64.match(/^data:(image\/[^;]+);base64,(.+)$/);
+        const mime = match?.[1] || 'image/png';
+        const base64Data = match?.[2] || img.cleanedBase64.split(',')[1];
+        const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png';
+        imagesFolder?.file(`slide-${img.pageNumber}.${ext}`, base64Data, { base64: true });
       }
 
       // 生成 PPTX（服务端生成，避免客户端打包 Node 内置模块）
@@ -226,28 +228,37 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         }))
       );
 
-      const pptxResp = await fetch('/api/generate-pptx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slides: pptSlides.filter(s => s.dataUrl) }),
-      });
+      let pptxArrayBuffer: ArrayBuffer | null = null;
+      try {
+        const pptxResp = await fetch('/api/generate-pptx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slides: pptSlides.filter(s => s.dataUrl) }),
+        });
 
-      if (!pptxResp.ok) {
-        const errText = await pptxResp.text().catch(() => '');
-        throw new Error(`PPT 生成失败: ${pptxResp.status} ${errText.slice(0, 200)}`);
+        if (!pptxResp.ok) {
+          const errText = await pptxResp.text().catch(() => '');
+          throw new Error(`PPT 生成失败: ${pptxResp.status} ${errText.slice(0, 200)}`);
+        }
+
+        pptxArrayBuffer = await pptxResp.arrayBuffer();
+        zip.file('slides.pptx', pptxArrayBuffer);
+      } catch (pptError) {
+        console.error('PPT 生成失败，将仅导出图片', pptError);
       }
-
-      const pptxArrayBuffer = await pptxResp.arrayBuffer();
-      zip.file('slides.pptx', pptxArrayBuffer);
 
       // 打包下载
       const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'cleaned-slides.zip';
+      a.download = pptxArrayBuffer ? 'cleaned-slides.zip' : 'cleaned-images.zip';
       a.click();
       URL.revokeObjectURL(url);
+
+      if (!pptxArrayBuffer) {
+        alert('PPT 导出失败，已仅导出图片压缩包');
+      }
     } catch (error) {
       console.error('导出失败', error);
       alert('导出失败，请重试');

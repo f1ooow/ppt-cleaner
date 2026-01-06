@@ -23,10 +23,12 @@ export async function POST(request: NextRequest) {
     }
 
     const pptx = new PptxGenJS();
-    pptx.layout = '16x9';
+    pptx.layout = 'LAYOUT_16x9';
 
-    const slideWidth = (pptx as any).width ?? 13.333;
-    const slideHeight = (pptx as any).height ?? 7.5;
+    const EMU_PER_INCH = 914400;
+    const presLayout = (pptx as any)._presLayout;
+    const slideWidth = presLayout?.width ? presLayout.width / EMU_PER_INCH : 10;
+    const slideHeight = presLayout?.height ? presLayout.height / EMU_PER_INCH : 5.625;
 
     for (const item of slides) {
       if (!item?.dataUrl) continue;
