@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from 'react';
 import JSZip from 'jszip';
-import PptxGenJS from 'pptxgenjs';
 import type { SlideImage } from './types';
 
 interface PagePreviewProps {
@@ -219,21 +218,26 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         }
       }
 
-      // 生成 PPTX（每张图一页，铺满 16:9）
-      const pptx = new PptxGenJS();
-      pptx.layout = '16x9';
-      completedImages.forEach(img => {
-        if (!img.cleanedBase64) return;
-        const slide = pptx.addSlide();
-        slide.addImage({
-          data: img.cleanedBase64,
-          x: 0,
-          y: 0,
-          w: pptx.width,
-          h: pptx.height
-        });
+      // 生成 PPTX（服务端生成，避免客户端打包 Node 内置模块）
+      const pptSlides = await Promise.all(
+        completedImages.map(async (img) => ({
+          pageNumber: img.pageNumber,
+          dataUrl: img.cleanedBase64 ? await compressImage(img.cleanedBase64, 1200) : '',
+        }))
+      );
+
+      const pptxResp = await fetch('/api/generate-pptx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slides: pptSlides.filter(s => s.dataUrl) }),
       });
-      const pptxArrayBuffer = await pptx.write('arraybuffer');
+
+      if (!pptxResp.ok) {
+        const errText = await pptxResp.text().catch(() => '');
+        throw new Error(`PPT 生成失败: ${pptxResp.status} ${errText.slice(0, 200)}`);
+      }
+
+      const pptxArrayBuffer = await pptxResp.arrayBuffer();
       zip.file('slides.pptx', pptxArrayBuffer);
 
       // 打包下载
