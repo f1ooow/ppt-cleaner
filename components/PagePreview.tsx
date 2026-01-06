@@ -132,7 +132,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
     const indicesToProcess = imagesRef.current
       .map((img, idx) => ({ img, idx }))
-      .filter(({ img }) => img.status !== 'completed')
+      .filter(({ img }) => img.status !== 'completed' && img.status !== 'processing')
       .map(({ idx }) => idx);
 
     if (indicesToProcess.length === 0) return;
@@ -339,7 +339,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
             disabled={isProcessing || processedCount === images.length}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isProcessing ? '处理中...' : '开始清洗'}
+            {isProcessing ? '处理中...' : '批量清洗'}
           </button>
 
           <button
