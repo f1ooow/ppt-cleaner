@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import JSZip from 'jszip';
+import PptxGenJS from 'pptxgenjs';
 import type { SlideImage } from './types';
 
 interface PagePreviewProps {
@@ -197,28 +198,56 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
   };
 
   const handleDownloadAll = async () => {
-    const completedImages = images.filter(img => img.cleanedBase64);
+    const completedImages = images
+      .filter(img => img.cleanedBase64)
+      .sort((a, b) => a.pageNumber - b.pageNumber);
+
     if (completedImages.length === 0) {
       alert('没有可下载的图片');
       return;
     }
 
-    const zip = new JSZip();
+    try {
+      const zip = new JSZip();
+      const imagesFolder = zip.folder('images');
 
-    for (const img of completedImages) {
-      if (img.cleanedBase64) {
-        const base64Data = img.cleanedBase64.split(',')[1];
-        zip.file(`slide-${img.pageNumber}.png`, base64Data, { base64: true });
+      // 写入图片文件夹
+      for (const img of completedImages) {
+        if (img.cleanedBase64) {
+          const base64Data = img.cleanedBase64.split(',')[1];
+          imagesFolder?.file(`slide-${img.pageNumber}.png`, base64Data, { base64: true });
+        }
       }
-    }
 
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'cleaned-slides.zip';
-    a.click();
-    URL.revokeObjectURL(url);
+      // 生成 PPTX（每张图一页，铺满 16:9）
+      const pptx = new PptxGenJS();
+      pptx.layout = '16x9';
+      completedImages.forEach(img => {
+        if (!img.cleanedBase64) return;
+        const slide = pptx.addSlide();
+        slide.addImage({
+          data: img.cleanedBase64,
+          x: 0,
+          y: 0,
+          w: pptx.width,
+          h: pptx.height
+        });
+      });
+      const pptxArrayBuffer = await pptx.write('arraybuffer');
+      zip.file('slides.pptx', pptxArrayBuffer);
+
+      // 打包下载
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cleaned-slides.zip';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('导出失败', error);
+      alert('导出失败，请重试');
+    }
   };
 
   const handleDownloadSingle = (image: SlideImage) => {
@@ -275,7 +304,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
             disabled={processedCount === 0}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            打包下载
+            打包下载（含PPT）
           </button>
         </div>
       </div>
