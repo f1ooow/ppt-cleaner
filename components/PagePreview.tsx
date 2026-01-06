@@ -12,7 +12,7 @@ interface PagePreviewProps {
 
 export default function PagePreview({ images, onImagesUpdate, onBack }: PagePreviewProps) {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [showingOriginal, setShowingOriginal] = useState<Set<string>>(new Set());
 
   // 用于追踪当前 session，防止旧请求覆盖新数据
@@ -35,7 +35,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         abortControllerRef.current.abort();
       }
       setIsProcessing(false);
-      setCurrentIndex(-1);
+      setBatchProgress(null);
     }
     sessionRef.current = newSessionId;
   }, [images]);
@@ -130,44 +130,72 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
     const currentSession = sessionRef.current;
     abortControllerRef.current = new AbortController();
 
+    const indicesToProcess = imagesRef.current
+      .map((img, idx) => ({ img, idx }))
+      .filter(({ img }) => img.status !== 'completed')
+      .map(({ idx }) => idx);
+
+    if (indicesToProcess.length === 0) return;
+
     setIsProcessing(true);
+    setBatchProgress({ done: 0, total: indicesToProcess.length });
 
-    for (let i = 0; i < imagesRef.current.length; i++) {
-      // 检查 session 是否仍然有效（用户可能上传了新文件）
-      if (sessionRef.current !== currentSession) {
-        console.log('[Clean] Session changed, stopping batch clean');
-        break;
-      }
+    // 先把待处理的都标记为 queued（排队中）
+    const queuedImages = imagesRef.current.map((img, idx) => {
+      if (!indicesToProcess.includes(idx)) return img;
+      if (img.status === 'processing') return img;
+      return { ...img, status: 'queued' as const, error: undefined };
+    });
+    onImagesUpdate(queuedImages);
 
-      if (imagesRef.current[i].status === 'completed') continue;
+    let cursor = 0;
+    let inFlight = 0;
+    const maxConcurrent = 3;
 
-      setCurrentIndex(i);
-      // 设置当前图片为 processing
-      const processingImages = imagesRef.current.map((img, idx) =>
-        idx === i ? { ...img, status: 'processing' as const } : img
-      );
-      onImagesUpdate(processingImages);
-
-      const result = await cleanImage(imagesRef.current[i], i);
-
-      // 再次检查 session
-      if (sessionRef.current !== currentSession) {
-        console.log('[Clean] Session changed after API call, not updating');
-        break;
-      }
-
-      // 使用最新的 imagesRef 更新
-      const updatedImages = imagesRef.current.map((img, idx) =>
-        idx === i ? result : img
-      );
-      onImagesUpdate(updatedImages);
-    }
-
-    // 只有当 session 仍然有效时才重置状态
-    if (sessionRef.current === currentSession) {
-      setCurrentIndex(-1);
+    const finishIfDone = () => {
+      if (sessionRef.current !== currentSession) return;
+      if (cursor < indicesToProcess.length) return;
+      if (inFlight > 0) return;
       setIsProcessing(false);
-    }
+      setBatchProgress(null);
+    };
+
+    const launchNext = () => {
+      if (sessionRef.current !== currentSession) return;
+
+      while (inFlight < maxConcurrent && cursor < indicesToProcess.length) {
+        const idx = indicesToProcess[cursor++];
+        inFlight += 1;
+
+        // 标记为 processing
+        const processingImages = imagesRef.current.map((img, i) =>
+          i === idx ? { ...img, status: 'processing' as const, error: undefined } : img
+        );
+        onImagesUpdate(processingImages);
+
+        cleanImage(imagesRef.current[idx], idx)
+          .then((result) => {
+            if (sessionRef.current !== currentSession) return;
+            const updatedImages = imagesRef.current.map((img, i) => (i === idx ? result : img));
+            onImagesUpdate(updatedImages);
+          })
+          .catch((error) => {
+            if (sessionRef.current !== currentSession) return;
+            const updatedImages = imagesRef.current.map((img, i) =>
+              i === idx ? { ...img, status: 'error' as const, error: String(error) } : img
+            );
+            onImagesUpdate(updatedImages);
+          })
+          .finally(() => {
+            inFlight -= 1;
+            setBatchProgress((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev));
+            launchNext();
+            finishIfDone();
+          });
+      }
+    };
+
+    launchNext();
   };
 
   const handleCleanSingle = async (index: number) => {
@@ -325,11 +353,13 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
       </div>
 
       {/* 进度条 */}
-      {isProcessing && (
+      {isProcessing && batchProgress && (
         <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
           <div
             className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${((currentIndex + 1) / images.length) * 100}%` }}
+            style={{
+              width: `${batchProgress.total ? (batchProgress.done / batchProgress.total) * 100 : 0}%`
+            }}
           />
         </div>
       )}
@@ -361,6 +391,14 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
                 </div>
               )}
 
+              {image.status === 'queued' && (
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                  <span className="text-white text-sm bg-black/40 px-3 py-1 rounded">
+                    队列中
+                  </span>
+                </div>
+              )}
+
               {image.status === 'error' && (
                 <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center">
                   <span className="text-red-600 text-sm bg-white px-2 py-1 rounded">
@@ -384,7 +422,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
               <span className="text-sm text-gray-500">第 {image.pageNumber} 页</span>
 
               <div className="flex gap-2">
-                {image.status !== 'completed' && image.status !== 'processing' && (
+                {(image.status === 'pending' || image.status === 'error') && (
                   <button
                     onClick={() => handleCleanSingle(index)}
                     className="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200"

@@ -3,6 +3,6 @@ export interface SlideImage {
   pageNumber: number;
   originalBase64: string;
   cleanedBase64?: string;
-  status: 'pending' | 'processing' | 'completed' | 'error';
+  status: 'pending' | 'queued' | 'processing' | 'completed' | 'error';
   error?: string;
 }
