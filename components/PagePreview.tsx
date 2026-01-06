@@ -147,6 +147,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
       return { ...img, status: 'queued' as const, error: undefined };
     });
     onImagesUpdate(queuedImages);
+    imagesRef.current = queuedImages;
 
     let cursor = 0;
     let inFlight = 0;
@@ -163,21 +164,34 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
     const launchNext = () => {
       if (sessionRef.current !== currentSession) return;
 
+      // 收集本批次要启动的所有 idx
+      const indicesLaunching: number[] = [];
       while (inFlight < maxConcurrent && cursor < indicesToProcess.length) {
         const idx = indicesToProcess[cursor++];
+        indicesLaunching.push(idx);
         inFlight += 1;
+      }
 
-        // 标记为 processing
-        const processingImages = imagesRef.current.map((img, i) =>
-          i === idx ? { ...img, status: 'processing' as const, error: undefined } : img
-        );
-        onImagesUpdate(processingImages);
+      if (indicesLaunching.length === 0) return;
 
+      // 一次性把所有要启动的图片标记为 processing，避免状态覆盖
+      const launchingSet = new Set(indicesLaunching);
+      const processingImages = imagesRef.current.map((img, i) =>
+        launchingSet.has(i)
+          ? { ...img, status: 'processing' as const, error: undefined }
+          : img
+      );
+      onImagesUpdate(processingImages);
+      imagesRef.current = processingImages;
+
+      // 发起 API 请求
+      for (const idx of indicesLaunching) {
         cleanImage(imagesRef.current[idx], idx)
           .then((result) => {
             if (sessionRef.current !== currentSession) return;
             const updatedImages = imagesRef.current.map((img, i) => (i === idx ? result : img));
             onImagesUpdate(updatedImages);
+            imagesRef.current = updatedImages;
           })
           .catch((error) => {
             if (sessionRef.current !== currentSession) return;
@@ -185,6 +199,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
               i === idx ? { ...img, status: 'error' as const, error: String(error) } : img
             );
             onImagesUpdate(updatedImages);
+            imagesRef.current = updatedImages;
           })
           .finally(() => {
             inFlight -= 1;
