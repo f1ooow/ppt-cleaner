@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "fabric": "^7.1.0",
     "jszip": "^3.10.1",
     "next": "^14.0.0",
     "pdfjs-dist": "^3.11.174",

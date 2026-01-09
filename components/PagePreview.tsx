@@ -15,22 +15,17 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [showingOriginal, setShowingOriginal] = useState<Set<string>>(new Set());
 
-  // 用于追踪当前 session，防止旧请求覆盖新数据
   const sessionRef = useRef<string>('');
   const abortControllerRef = useRef<AbortController | null>(null);
-  // 保存最新的 images 引用，避免闭包问题
   const imagesRef = useRef<SlideImage[]>(images);
 
-  // 同步 imagesRef
   useEffect(() => {
     imagesRef.current = images;
   }, [images]);
 
-  // 当 images 数组的第一个元素的 id 改变时，说明上传了新文件
   useEffect(() => {
     const newSessionId = images[0]?.id || '';
     if (sessionRef.current && sessionRef.current !== newSessionId) {
-      // 新文件上传，取消正在进行的请求
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -43,59 +38,18 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
   const processedCount = images.filter(img => img.status === 'completed').length;
   const errorCount = images.filter(img => img.status === 'error').length;
 
-  // 压缩图片到指定大小以下
-  const compressImage = async (base64: string, maxSizeKB: number = 1500): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-
-        // 如果原图很大，先缩小尺寸
-        const maxDimension = 2000;
-        if (width > maxDimension || height > maxDimension) {
-          const ratio = Math.min(maxDimension / width, maxDimension / height);
-          width = Math.floor(width * ratio);
-          height = Math.floor(height * ratio);
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-
-        // 尝试不同质量压缩
-        let quality = 0.8;
-        let result = canvas.toDataURL('image/jpeg', quality);
-
-        while (result.length > maxSizeKB * 1024 * 1.37 && quality > 0.3) {
-          quality -= 0.1;
-          result = canvas.toDataURL('image/jpeg', quality);
-        }
-
-        resolve(result);
-      };
-      img.src = base64;
-    });
-  };
-
   const cleanImage = async (image: SlideImage, index: number): Promise<SlideImage> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
 
     try {
-      // 压缩图片避免请求过大
-      const compressedBase64 = await compressImage(image.originalBase64);
-
       const response = await fetch('/api/clean-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: compressedBase64 }),
+        body: JSON.stringify({ image_base64: image.originalBase64 }),
         signal: controller.signal
       });
 
-      // 检查响应是否成功
       if (!response.ok) {
         const errorText = await response.text();
         return { ...image, status: 'error', error: `请求失败: ${response.status}` };
@@ -140,7 +94,6 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
     setIsProcessing(true);
     setBatchProgress({ done: 0, total: indicesToProcess.length });
 
-    // 先把待处理的都标记为 queued（排队中）
     const queuedImages = imagesRef.current.map((img, idx) => {
       if (!indicesToProcess.includes(idx)) return img;
       if (img.status === 'processing') return img;
@@ -164,7 +117,6 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
     const launchNext = () => {
       if (sessionRef.current !== currentSession) return;
 
-      // 收集本批次要启动的所有 idx
       const indicesLaunching: number[] = [];
       while (inFlight < maxConcurrent && cursor < indicesToProcess.length) {
         const idx = indicesToProcess[cursor++];
@@ -174,7 +126,6 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
       if (indicesLaunching.length === 0) return;
 
-      // 一次性把所有要启动的图片标记为 processing，避免状态覆盖
       const launchingSet = new Set(indicesLaunching);
       const processingImages = imagesRef.current.map((img, i) =>
         launchingSet.has(i)
@@ -184,7 +135,6 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
       onImagesUpdate(processingImages);
       imagesRef.current = processingImages;
 
-      // 发起 API 请求
       for (const idx of indicesLaunching) {
         cleanImage(imagesRef.current[idx], idx)
           .then((result) => {
@@ -217,22 +167,18 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
     const currentSession = sessionRef.current;
     const targetImage = imagesRef.current[index];
 
-    // 1. 设置 processing 状态
     const processingImages = imagesRef.current.map((img, i) =>
       i === index ? { ...img, status: 'processing' as const } : img
     );
     onImagesUpdate(processingImages);
 
-    // 2. 调用 API
     const result = await cleanImage(targetImage, index);
 
-    // 3. 检查 session 是否仍然有效
     if (sessionRef.current !== currentSession) {
       console.log('[Clean] Session changed, not updating single image');
       return;
     }
 
-    // 4. 使用最新的 imagesRef 更新结果，只更新对应 index 的图片
     const updatedImages = imagesRef.current.map((img, i) =>
       i === index ? result : img
     );
@@ -253,7 +199,6 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
       const zip = new JSZip();
       const imagesFolder = zip.folder('images');
 
-      // 写入图片文件夹
       for (const img of completedImages) {
         if (!img.cleanedBase64) continue;
         const match = img.cleanedBase64.match(/^data:(image\/[^;]+);base64,(.+)$/);
@@ -263,13 +208,10 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         imagesFolder?.file(`slide-${img.pageNumber}.${ext}`, base64Data, { base64: true });
       }
 
-      // 生成 PPTX（服务端生成，避免客户端打包 Node 内置模块）
-      const pptSlides = await Promise.all(
-        completedImages.map(async (img) => ({
-          pageNumber: img.pageNumber,
-          dataUrl: img.cleanedBase64 ? await compressImage(img.cleanedBase64, 1200) : '',
-        }))
-      );
+      const pptSlides = completedImages.map((img) => ({
+        pageNumber: img.pageNumber,
+        dataUrl: img.cleanedBase64 || '',
+      }));
 
       let pptxArrayBuffer: ArrayBuffer | null = null;
       try {
@@ -290,7 +232,6 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         console.error('PPT 生成失败，将仅导出图片', pptError);
       }
 
-      // 打包下载
       const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -335,7 +276,8 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+          className="flex items-center gap-2 transition-colors"
+          style={{ color: 'rgb(var(--text-secondary))' }}
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -344,15 +286,15 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         </button>
 
         <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-500">
+          <span className="text-sm" style={{ color: 'rgb(var(--text-muted))' }}>
             {processedCount} / {images.length} 已处理
-            {errorCount > 0 && <span className="text-red-500 ml-2">{errorCount} 失败</span>}
+            {errorCount > 0 && <span className="ml-2" style={{ color: 'rgb(var(--color-error))' }}>{errorCount} 失败</span>}
           </span>
 
           <button
             onClick={handleCleanAll}
             disabled={isProcessing || processedCount === images.length}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-primary btn-sm"
           >
             {isProcessing ? '处理中...' : '批量清洗'}
           </button>
@@ -360,7 +302,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
           <button
             onClick={handleDownloadAll}
             disabled={processedCount === 0}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-success btn-sm"
           >
             打包下载（含PPT）
           </button>
@@ -369,11 +311,12 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
       {/* 进度条 */}
       {isProcessing && batchProgress && (
-        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+        <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg-elevated))' }}>
           <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+            className="h-full rounded-full transition-all duration-300"
             style={{
-              width: `${batchProgress.total ? (batchProgress.done / batchProgress.total) * 100 : 0}%`
+              width: `${batchProgress.total ? (batchProgress.done / batchProgress.total) * 100 : 0}%`,
+              backgroundColor: 'rgb(var(--color-primary))'
             }}
           />
         </div>
@@ -384,7 +327,11 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
         {images.map((image, index) => (
           <div
             key={image.id}
-            className="relative bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden"
+            className="relative rounded-xl overflow-hidden"
+            style={{
+              backgroundColor: 'rgb(var(--bg-card))',
+              border: '1px solid rgb(var(--border-color) / 0.5)'
+            }}
           >
             {/* 原图/处理后图片 */}
             <div className="aspect-video relative">
@@ -395,7 +342,8 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
                     : image.originalBase64
                 }
                 alt={`Slide ${image.pageNumber}`}
-                className="w-full h-full object-contain bg-gray-100 dark:bg-gray-900"
+                className="w-full h-full object-contain"
+                style={{ backgroundColor: 'rgb(var(--bg-elevated))' }}
               />
 
               {/* 状态覆盖层 */}
@@ -408,22 +356,22 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
               {image.status === 'queued' && (
                 <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                  <span className="text-white text-sm bg-black/40 px-3 py-1 rounded">
+                  <span className="text-white text-sm bg-black/40 px-3 py-1 rounded-lg">
                     队列中
                   </span>
                 </div>
               )}
 
               {image.status === 'error' && (
-                <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center">
-                  <span className="text-red-600 text-sm bg-white px-2 py-1 rounded">
+                <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'rgb(var(--color-error) / 0.1)' }}>
+                  <span className="text-sm px-3 py-1.5 rounded-lg bg-white" style={{ color: 'rgb(var(--color-error))' }}>
                     {image.error || '处理失败'}
                   </span>
                 </div>
               )}
 
               {image.status === 'completed' && (
-                <div className="absolute top-2 left-2 px-2 py-1 bg-green-500 text-white text-xs rounded-full flex items-center gap-1">
+                <div className="absolute top-2 left-2 badge-success">
                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
@@ -433,14 +381,18 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
             </div>
 
             {/* 操作栏 */}
-            <div className="p-2 flex items-center justify-between">
-              <span className="text-sm text-gray-500">第 {image.pageNumber} 页</span>
+            <div className="p-3 flex items-center justify-between">
+              <span className="text-sm" style={{ color: 'rgb(var(--text-muted))' }}>第 {image.pageNumber} 页</span>
 
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
                 {(image.status === 'pending' || image.status === 'error') && (
                   <button
                     onClick={() => handleCleanSingle(index)}
-                    className="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200"
+                    className="text-xs px-2.5 py-1 rounded-lg transition-all"
+                    style={{
+                      backgroundColor: 'rgb(var(--color-primary) / 0.1)',
+                      color: 'rgb(var(--color-primary))'
+                    }}
                   >
                     清洗
                   </button>
@@ -450,19 +402,31 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
                   <>
                     <button
                       onClick={() => toggleShowOriginal(image.id)}
-                      className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                      className="text-xs px-2.5 py-1 rounded-lg transition-all"
+                      style={{
+                        backgroundColor: 'rgb(var(--bg-elevated))',
+                        color: 'rgb(var(--text-secondary))'
+                      }}
                     >
                       {showingOriginal.has(image.id) ? '查看效果' : '查看原图'}
                     </button>
                     <button
                       onClick={() => handleCleanSingle(index)}
-                      className="text-xs px-2 py-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-200"
+                      className="text-xs px-2.5 py-1 rounded-lg transition-all"
+                      style={{
+                        backgroundColor: 'rgb(var(--color-warning) / 0.1)',
+                        color: 'rgb(var(--color-warning))'
+                      }}
                     >
                       重新清洗
                     </button>
                     <button
                       onClick={() => handleDownloadSingle(image)}
-                      className="text-xs px-2 py-1 bg-green-100 text-green-600 rounded hover:bg-green-200"
+                      className="text-xs px-2.5 py-1 rounded-lg transition-all"
+                      style={{
+                        backgroundColor: 'rgb(var(--color-success) / 0.1)',
+                        color: 'rgb(var(--color-success))'
+                      }}
                     >
                       下载
                     </button>

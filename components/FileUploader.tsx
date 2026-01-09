@@ -17,11 +17,9 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
     const zip = await JSZip.loadAsync(file);
     const images: SlideImage[] = [];
 
-    // 获取 ppt/media/ 目录下的所有图片
     const mediaFiles = Object.keys(zip.files)
       .filter(name => name.startsWith('ppt/media/') && /\.(png|jpg|jpeg|gif)$/i.test(name))
       .sort((a, b) => {
-        // 按文件名中的数字排序
         const numA = parseInt(a.match(/\d+/)?.[0] || '0');
         const numB = parseInt(b.match(/\d+/)?.[0] || '0');
         return numA - numB;
@@ -79,15 +77,13 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
   };
 
   const extractImagesFromPDF = async (file: File): Promise<SlideImage[]> => {
-    // 动态导入 PDF.js
     const pdfjsLib = await import('pdfjs-dist');
-    // 使用 CDN 加载 worker
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const images: SlideImage[] = [];
-    const scale = 2; // 2x 分辨率
+    const scale = 2;
 
     setProgress({ current: 0, total: pdf.numPages });
 
@@ -140,10 +136,8 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
       } else if (ext === 'pdf') {
         images = await extractImagesFromPDF(file);
       } else {
-        // 图片文件
         images = await extractImagesFromImages(files || new DataTransfer().files);
         if (images.length === 0) {
-          // 单个图片
           const base64 = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as string);
@@ -201,19 +195,19 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full">
       <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         className={`
-          border-2 border-dashed rounded-xl p-12 text-center transition-all
-          ${isDragging
-            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400'
-          }
+          border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-200
           ${isProcessing ? 'pointer-events-none opacity-60' : 'cursor-pointer'}
         `}
+        style={{
+          borderColor: isDragging ? 'rgb(var(--color-primary))' : 'rgb(var(--border-color))',
+          backgroundColor: isDragging ? 'rgb(var(--color-primary) / 0.05)' : 'transparent'
+        }}
         onClick={() => !isProcessing && document.getElementById('file-input')?.click()}
       >
         <input
@@ -227,27 +221,30 @@ export default function FileUploader({ onImagesExtracted }: FileUploaderProps) {
 
         {isProcessing ? (
           <div className="space-y-4">
-            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-gray-600 dark:text-gray-300">
+            <div
+              className="w-12 h-12 border-4 border-t-transparent rounded-full animate-spin mx-auto"
+              style={{ borderColor: 'rgb(var(--color-primary))', borderTopColor: 'transparent' }}
+            />
+            <p style={{ color: 'rgb(var(--text-secondary))' }}>
               正在解析文件...
             </p>
             {progress.total > 0 && (
-              <p className="text-sm text-gray-500">
+              <p className="text-sm" style={{ color: 'rgb(var(--text-muted))' }}>
                 {progress.current} / {progress.total} 页
               </p>
             )}
           </div>
         ) : (
           <>
-            <div className="w-16 h-16 mx-auto mb-4 text-gray-400">
+            <div className="w-16 h-16 mx-auto mb-4" style={{ color: 'rgb(var(--text-muted))' }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
               </svg>
             </div>
-            <p className="text-lg font-medium text-gray-700 dark:text-gray-200 mb-2">
+            <p className="text-lg font-medium mb-2" style={{ color: 'rgb(var(--text-primary))' }}>
               拖放文件到此处，或点击上传
             </p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm" style={{ color: 'rgb(var(--text-muted))' }}>
               支持 .pptx、.pdf 和图片格式
             </p>
           </>

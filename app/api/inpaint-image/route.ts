@@ -10,11 +10,25 @@ export async function POST(request: NextRequest) {
     console.log('API_KEY:', API_KEY ? '已配置' : '未配置');
     console.log('MODEL:', MODEL);
 
-    const { image_base64 } = await request.json();
+    const { image_base64, mask_base64, instruction } = await request.json();
 
     if (!image_base64) {
       return NextResponse.json(
         { success: false, message: '图片数据不能为空' },
+        { status: 400 }
+      );
+    }
+
+    if (!mask_base64) {
+      return NextResponse.json(
+        { success: false, message: '遮罩数据不能为空' },
+        { status: 400 }
+      );
+    }
+
+    if (!instruction) {
+      return NextResponse.json(
+        { success: false, message: '编辑指令不能为空' },
         { status: 400 }
       );
     }
@@ -26,17 +40,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await cleanSlideImage(image_base64);
+    const result = await inpaintImage(image_base64, mask_base64, instruction);
 
     if (result) {
       return NextResponse.json({
         success: true,
-        message: '图片清洗成功',
+        message: '图片编辑成功',
         data: { image_base64: result }
       });
     } else {
       return NextResponse.json(
-        { success: false, message: '图片清洗失败，未能获取有效图片' },
+        { success: false, message: '图片编辑失败，未能获取有效图片' },
         { status: 500 }
       );
     }
@@ -47,48 +61,35 @@ export async function POST(request: NextRequest) {
     console.error('错误堆栈:', error instanceof Error ? error.stack : 'N/A');
     console.error('==================================================');
     return NextResponse.json(
-      { success: false, message: `图片清洗失败: ${error instanceof Error ? error.message : String(error)}` },
+      { success: false, message: `图片编辑失败: ${error instanceof Error ? error.message : String(error)}` },
       { status: 500 }
     );
   }
 }
 
-async function cleanSlideImage(imageBase64: string): Promise<string | null> {
-  const prompt = `请仔细观察这张PPT图片，然后重新生成一张干净的图片。
-
-【必须去除的内容】
-1. PPT模板装饰：页眉页脚、角落装饰、边框线条、标题栏装饰
-2. 所有文字内容：标题、正文、标签、说明文字等
-3. 背景图案：渐变背景、纹理背景、装饰性背景
-
-【必须保留的内容】
-1. 核心插图：人物、场景、物品等主体插画
-2. 图标元素：功能图标、示意图标
-3. 数据可视化：图表、流程图、示意图（去掉其中的文字标签）
-4. 文本框/色块框架：保留文本框的形状和颜色，只去除里面的文字
-5. 装饰性插画元素
-
-【输出要求】
-1. 整体背景改为纯白色
-2. 保持原有插图和元素的位置、大小
-3. 保持原有的风格和色彩
-4. 保持16:9比例
-5. 如果页面只有文字没有任何插图，则输出纯白图片
-
-直接生成图片，不要输出任何文字说明。`;
-
-  return callGeminiImageAPI(prompt, imageBase64);
-}
-
-async function callGeminiImageAPI(
-  prompt: string,
-  imageBase64: string
+async function inpaintImage(
+  imageBase64: string,
+  maskBase64: string,
+  instruction: string
 ): Promise<string | null> {
   const url = `${API_BASE}/v1beta/models/${MODEL}:generateContent`;
 
+  const prompt = `请根据遮罩区域（白色部分）对图片进行编辑。
+
+【编辑指令】
+${instruction}
+
+【要求】
+1. 只修改遮罩白色区域标记的部分
+2. 保持图片其他区域完全不变
+3. 修改后的内容要与周围环境自然融合
+4. 保持原图的风格和色调
+
+直接输出编辑后的完整图片。`;
+
   const parts: any[] = [{ text: prompt }];
 
-  // 解析 base64 图片
+  // 添加原始图片
   if (imageBase64.startsWith('data:')) {
     const match = imageBase64.match(/^data:(image\/[^;]+);base64,(.+)$/);
     if (match) {
@@ -99,6 +100,33 @@ async function callGeminiImageAPI(
         }
       });
     }
+  } else {
+    parts.push({
+      inline_data: {
+        mime_type: 'image/png',
+        data: imageBase64
+      }
+    });
+  }
+
+  // 添加遮罩图片
+  if (maskBase64.startsWith('data:')) {
+    const match = maskBase64.match(/^data:(image\/[^;]+);base64,(.+)$/);
+    if (match) {
+      parts.push({
+        inline_data: {
+          mime_type: match[1],
+          data: match[2]
+        }
+      });
+    }
+  } else {
+    parts.push({
+      inline_data: {
+        mime_type: 'image/png',
+        data: maskBase64
+      }
+    });
   }
 
   const payload = {
@@ -106,7 +134,6 @@ async function callGeminiImageAPI(
     generationConfig: {
       responseModalities: ['TEXT', 'IMAGE'],
       imageConfig: {
-        aspectRatio: '16:9',
         imageSize: '2K'
       }
     }
