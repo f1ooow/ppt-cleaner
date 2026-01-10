@@ -54,28 +54,29 @@ export async function POST(request: NextRequest) {
 }
 
 async function cleanSlideImage(imageBase64: string): Promise<string | null> {
-  const prompt = `请仔细观察这张PPT图片，然后重新生成一张干净的图片。
+  const prompt = `You are an image cleaner. Task: remove ALL text from a PPT slide image, especially flowcharts.
 
-【必须去除的内容】
-1. PPT模板装饰：页眉页脚、角落装饰、边框线条、标题栏装饰
-2. 所有文字内容：标题、正文、标签、说明文字等
-3. 背景图案：渐变背景、纹理背景、装饰性背景
+Processing order:
+1) Inspect the whole slide and every sub-region (all boxes, arrows, connectors, swimlanes, legends).
+2) Remove text first, then restore shapes/background.
+3) If any text remains, continue erasing until ZERO text is present.
 
-【必须保留的内容】
-1. 核心插图：人物、场景、物品等主体插画
-2. 图标元素：功能图标、示意图标
-3. 数据可视化：图表、流程图、示意图（去掉其中的文字标签）
-4. 文本框/色块框架：保留文本框的形状和颜色，只去除里面的文字
-5. 装饰性插画元素
+Remove (must erase completely):
+- All characters: letters, numbers, symbols, Chinese/Japanese/Korean text, handwriting, watermarks, annotations, axis labels.
+- Text inside shapes, inside arrows, along lines/connectors, in legends or captions.
+- Erase glyph strokes fully and fill with matching background color/gradient/texture. No residual strokes or halos.
 
-【输出要求】
-1. 整体背景改为纯白色
-2. 保持原有插图和元素的位置、大小
-3. 保持原有的风格和色彩
-4. 保持16:9比例
-5. 如果页面只有文字没有任何插图，则输出纯白图片
+Keep (must preserve exactly):
+- Shapes, arrows, connectors, lines, boxes, swimlane dividers, color blocks, gradients, layout, spacing, proportions.
+- Do NOT remove or deform arrows/lines/connectors while erasing text.
 
-直接生成图片，不要输出任何文字说明。`;
+Negative constraints:
+- No text, no numbers, no letters, no words, no logos or watermarks in the output.
+- Do not add new text or symbols.
+
+Output requirements:
+- Return a clean image with identical layout/colors/shapes but 0 text.
+- If any text is still visible, refine until all text is gone.`;
 
   return callGeminiImageAPI(prompt, imageBase64);
 }
