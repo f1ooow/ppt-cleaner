@@ -12,6 +12,7 @@ interface PagePreviewProps {
 
 export default function PagePreview({ images, onImagesUpdate, onBack }: PagePreviewProps) {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [showingOriginal, setShowingOriginal] = useState<Set<string>>(new Set());
 
@@ -40,7 +41,7 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
   const cleanImage = async (image: SlideImage, index: number): Promise<SlideImage> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
 
     try {
       const response = await fetch('/api/clean-image', {
@@ -186,66 +187,40 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
   };
 
   const handleDownloadAll = async () => {
+    console.log('[Download] 开始打包下载, images:', images.length, 'processedCount:', processedCount);
     const completedImages = images
       .filter(img => img.cleanedBase64)
       .sort((a, b) => a.pageNumber - b.pageNumber);
+    console.log('[Download] completedImages:', completedImages.length);
 
     if (completedImages.length === 0) {
       alert('没有可下载的图片');
       return;
     }
 
+    setIsDownloading(true);
     try {
       const zip = new JSZip();
-      const imagesFolder = zip.folder('images');
 
       for (const img of completedImages) {
         if (!img.cleanedBase64) continue;
         const match = img.cleanedBase64.match(/^data:(image\/[^;]+);base64,(.+)$/);
-        const mime = match?.[1] || 'image/png';
         const base64Data = match?.[2] || img.cleanedBase64.split(',')[1];
-        const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png';
-        imagesFolder?.file(`slide-${img.pageNumber}.${ext}`, base64Data, { base64: true });
-      }
-
-      const pptSlides = completedImages.map((img) => ({
-        pageNumber: img.pageNumber,
-        dataUrl: img.cleanedBase64 || '',
-      }));
-
-      let pptxArrayBuffer: ArrayBuffer | null = null;
-      try {
-        const pptxResp = await fetch('/api/generate-pptx', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slides: pptSlides.filter(s => s.dataUrl) }),
-        });
-
-        if (!pptxResp.ok) {
-          const errText = await pptxResp.text().catch(() => '');
-          throw new Error(`PPT 生成失败: ${pptxResp.status} ${errText.slice(0, 200)}`);
-        }
-
-        pptxArrayBuffer = await pptxResp.arrayBuffer();
-        zip.file('slides.pptx', pptxArrayBuffer);
-      } catch (pptError) {
-        console.error('PPT 生成失败，将仅导出图片', pptError);
+        zip.file(`slide-${img.pageNumber}.png`, base64Data, { base64: true });
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = pptxArrayBuffer ? 'cleaned-slides.zip' : 'cleaned-images.zip';
+      a.download = 'cleaned-slides.zip';
       a.click();
       URL.revokeObjectURL(url);
-
-      if (!pptxArrayBuffer) {
-        alert('PPT 导出失败，已仅导出图片压缩包');
-      }
     } catch (error) {
       console.error('导出失败', error);
       alert('导出失败，请重试');
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -301,10 +276,10 @@ export default function PagePreview({ images, onImagesUpdate, onBack }: PagePrev
 
           <button
             onClick={handleDownloadAll}
-            disabled={processedCount === 0}
+            disabled={processedCount === 0 || isDownloading}
             className="btn-success btn-sm"
           >
-            打包下载（含PPT）
+            {isDownloading ? '打包中...' : '打包下载'}
           </button>
         </div>
       </div>

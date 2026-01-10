@@ -56,7 +56,7 @@ export default function EditMode({}: EditModeProps) {
     setIsProcessing(true);
     try {
       const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 180000);
+      const tid = setTimeout(() => ctrl.abort(), 300000);
       const res = await fetch('/api/inpaint-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
